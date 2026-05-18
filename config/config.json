@@ -1,0 +1,15 @@
+{
+    "pollIntervalMs": 1000,
+    "pluginDir": "./plugins",
+    "commTarget": "",
+    "monitorRegions": [
+        {
+            "id": "ai_terminal_1",
+            "x": 100,
+            "y": 100,
+            "width": 800,
+            "height": 600,
+            "threshold": 0.05
+        }
+    ]
+}

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" -S . -B build2 -DOpenCV_DIR=\"C:/Program Files/Opencv/opencv/build\")",
+      "Bash(\"C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --build build2 --config Debug --target comm_plugin)",
+      "Bash(PATH='__TRACKED_VAR__:/c/Program Files/Opencv/opencv/build/x64/vc16/bin' C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/ctest.exe --test-dir . -C Debug --output-on-failure)"
+    ]
+  }
+}

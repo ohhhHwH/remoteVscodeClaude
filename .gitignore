@@ -1,0 +1,66 @@
+
+# Ignore build directories
+build/
+build2/
+bin/
+Debug/
+Release/
+x64/
+
+# CMake files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+Testing/
+CTestTestfile.cmake
+
+# Visual Studio files
+*.sln
+*.vcxproj*
+*.vcxproj.filters
+*.vcxproj.user
+*.suo
+*.user
+.vs/
+*.VC.db
+
+# Visual Studio generated binary/object files
+*.obj
+*.o
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.ipch/
+
+# Shared library / executables
+*.dll
+*.so
+*.dylib
+*.exe
+*.out
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+*~
+*.swp
+*.swo
+
+# Coverage and build artifacts
+coverage/
+*.gcno
+*.gcda
+
+# Editor/project settings
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Project-specific
+tem/
+log/
