@@ -13,7 +13,6 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 if(OpenCV_FOUND)
     include_directories(${OpenCV_INCLUDE_DIRS})
 
-    # 核心主控进程
     add_executable(controller
         src/core/main.cpp
         src/core/PluginManager.cpp
@@ -22,23 +21,37 @@ if(OpenCV_FOUND)
     )
     target_link_libraries(controller ${OpenCV_LIBS})
 
-    # 屏幕监控插件
     add_library(monitor_plugin SHARED
         src/monitor/MonitorPlugin.cpp
     )
     target_link_libraries(monitor_plugin ${OpenCV_LIBS})
 
-    # 通信插件
     add_library(comm_plugin SHARED
         src/comm/WeChatComm.cpp
         src/comm/OCREngine.cpp
     )
     target_link_libraries(comm_plugin ${OpenCV_LIBS})
 
-    # 操作插件
     add_library(action_plugin SHARED
         src/action/Win32Action.cpp
     )
+
+    # GUI application
+    add_executable(gui_app WIN32
+        src/gui/main_gui.cpp
+        src/gui/App.cpp
+        third_party/imgui/imgui.cpp
+        third_party/imgui/imgui_draw.cpp
+        third_party/imgui/imgui_tables.cpp
+        third_party/imgui/imgui_widgets.cpp
+        third_party/imgui/backends/imgui_impl_win32.cpp
+        third_party/imgui/backends/imgui_impl_dx11.cpp
+    )
+    target_include_directories(gui_app PRIVATE
+        third_party/imgui
+        third_party/imgui/backends
+    )
+    target_link_libraries(gui_app ${OpenCV_LIBS} d3d11 dxgi)
 else()
     message(STATUS "OpenCV not found - building tests only")
 endif()

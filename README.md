@@ -1,4 +1,9 @@
 
+
+
+input zone
+
+
 # 初版设想
 开发一个app在平板/手机上运行，监听电脑上的事件，并模拟点击/输入操作，实现各个ai终端的监工。
 
@@ -10,7 +15,7 @@
 
 ## 电脑端
 
-设置忽略区和关注区，当发现关注区有变化时，触发事件，发送给手机端。
+设置忽略区和关注区，当发现关注区一定时间内没有变化时（说明AI不工作了），触发事件，发送给手机端。
 
 监听微信、QQ等APP的消息通知，当有新消息时，触发事件，在电脑上执行相应的操作。
 
@@ -66,13 +71,6 @@
 5. 通信插件定时OCR识别聊天窗口，读取手机端发来的指令
 6. 操作插件执行指令（点击、输入等）
 
-## 构建
-
-```bash
-mkdir build && cd build
-cmake .. -G "Visual Studio 17 2022"
-cmake --build . --config Release
-```
 
 ## 依赖
 
@@ -84,3 +82,80 @@ cmake --build . --config Release
 ## 配置
 
 编辑 `config/config.json` 设置监控区域、通信目标窗口等参数。
+
+
+## 构建
+
+PowerShell:
+```powershell
+# 配置
+& "C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" -S . -B build -DOpenCV_DIR="C:/Program Files/Opencv/opencv/build"
+
+# 编译全部
+& "C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build --config Debug
+
+# 只编译GUI
+& "C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build --config Debug --target gui_app
+```
+
+CMD:
+```cmd
+:: 配置
+"C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" -S . -B build -DOpenCV_DIR="C:/Program Files/Opencv/opencv/build"
+
+:: 编译全部
+"C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build --config Debug
+
+:: 只编译GUI
+"C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build --config Debug --target gui_app
+```
+
+## 运行
+
+PowerShell:
+```powershell
+# 需要OpenCV DLL在PATH中
+$env:PATH += ";C:\Program Files\Opencv\opencv\build\x64\vc16\bin"
+
+# 运行GUI
+build\bin\Debug\gui_app.exe
+
+# 运行主控进程
+build\bin\Debug\controller.exe config\config.json
+
+# 运行全部测试
+& "C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/ctest.exe" --test-dir build -C Debug --output-on-failure
+
+# 或单独运行某个测试
+build\bin\Debug\test_eventbus.exe
+build\bin\Debug\test_config.exe
+build\bin\Debug\test_json.exe
+build\bin\Debug\test_ipc.exe
+build\bin\Debug\test_action.exe
+build\bin\Debug\test_monitor.exe
+build\bin\Debug\test_comm.exe
+```
+
+CMD:
+```cmd
+:: 需要OpenCV DLL在PATH中
+set PATH=%PATH%;C:\Program Files\Opencv\opencv\build\x64\vc16\bin
+
+:: 运行GUI
+build\bin\Debug\gui_app.exe
+
+:: 运行主控进程
+build\bin\Debug\controller.exe config\config.json
+
+:: 运行全部测试
+"C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/ctest.exe" --test-dir build -C Debug --output-on-failure
+
+:: 或单独运行某个测试
+build\bin\Debug\test_eventbus.exe
+build\bin\Debug\test_config.exe
+build\bin\Debug\test_json.exe
+build\bin\Debug\test_ipc.exe
+build\bin\Debug\test_action.exe
+build\bin\Debug\test_monitor.exe
+build\bin\Debug\test_comm.exe
+```
