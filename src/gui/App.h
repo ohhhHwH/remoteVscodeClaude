@@ -16,6 +16,7 @@ struct AppState {
     Rect monitorRegion{0, 0, 0, 0};
     Rect commInputRegion{0, 0, 0, 0};
     Rect commChatRegion{0, 0, 0, 0};
+    POINT commClickPoint{0, 0}; // absolute screen position to double-click for copy
     float threshold = 0.05f;
     int pollIntervalMs = 1000;
     int noChangeTimeoutSec = 10;
@@ -54,6 +55,7 @@ private:
     void SendImageToComm(const cv::Mat& image);
 
     std::string ReadChatByClipboard();
+    std::string ReadChatAtPosition(int absX, int absY);
     Command ParseCommand(const std::string& text);
     void ExecuteCommand(const Command& cmd);
 
@@ -85,6 +87,7 @@ private:
     // Pending message to send
     std::mutex sendMutex_;
     std::string pendingSend_;
+    bool suppressNextRead_ = false; // set after we send so CommThread skips one cycle
 
     // Logs
     std::mutex logMutex_;

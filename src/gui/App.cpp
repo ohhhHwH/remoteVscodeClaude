@@ -316,6 +316,21 @@ void App::RenderCommPanel() {
         state_.commChatRegion.width, state_.commChatRegion.height);
 
     ImGui::Spacing();
+    if (ImGui::Button("Pick Click Point")) {
+        HWND hwnd = GetForegroundWindow();
+        ShowWindow(hwnd, SW_MINIMIZE);
+        Sleep(300);
+        // Wait for user to click a point
+        while (!(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) Sleep(10);
+        GetCursorPos(&state_.commClickPoint);
+        while (GetAsyncKeyState(VK_LBUTTON) & 0x8000) Sleep(10);
+        ShowWindow(hwnd, SW_RESTORE);
+        SetForegroundWindow(hwnd);
+    }
+    ImGui::SameLine();
+    ImGui::Text("Click Point: (%ld, %ld)", state_.commClickPoint.x, state_.commClickPoint.y);
+
+    ImGui::Spacing();
     if (!state_.commRunning) {
         if (ImGui::Button("Start Listen") && state_.commChatRegion.width > 0)
             StartComm();
@@ -518,6 +533,12 @@ void App::SendToComm(const std::string& text) {
         actionLog_.push_back("[" + TimeNow() + "] Sent: \"" + text + "\"");
     }
 
+    // Suppress the next CommThread read cycle — the chat change was caused by us
+    {
+        std::lock_guard<std::mutex> lk(sendMutex_);
+        suppressNextRead_ = true;
+    }
+
     // Auto-start listening for reply
     if (!state_.commRunning && state_.commChatRegion.width > 0) {
         StartComm();
@@ -528,9 +549,20 @@ void App::SendToComm(const std::string& text) {
 
 void App::CommThread() {
     cv::Mat lastFrame;
+    std::string lastReadText;
 
     while (!commStop_) {
         if (state_.commChatRegion.width <= 0) { Sleep(state_.pollIntervalMs); continue; }
+
+        {
+            std::lock_guard<std::mutex> lk(sendMutex_);
+            if (suppressNextRead_) {
+                suppressNextRead_ = false;
+                lastFrame = cv::Mat();
+                Sleep(state_.pollIntervalMs);
+                continue;
+            }
+        }
 
         cv::Mat current = CaptureScreen(state_.commChatRegion);
         if (current.empty()) { Sleep(state_.pollIntervalMs); continue; }
@@ -546,21 +578,22 @@ void App::CommThread() {
         }
         lastFrame = current.clone();
 
-        if (changed) {
+        if (changed && state_.commClickPoint.x != 0 && state_.commClickPoint.y != 0) {
             { std::lock_guard<std::mutex> lk(frameMutex_); pendingChatFrame_ = current.clone(); }
 
-            Sleep(500); // wait for render to settle
-            std::string text = ReadChatByClipboard();
-            if (!text.empty()) {
+            Sleep(500);
+            std::string text = ReadChatAtPosition(state_.commClickPoint.x, state_.commClickPoint.y);
+            if (!text.empty() && text != lastReadText) {
+                lastReadText = text;
                 {
                     std::lock_guard<std::mutex> lk(logMutex_);
                     commLog_.push_back("[" + TimeNow() + "] " + text);
-                    actionLog_.push_back("[" + TimeNow() + "] Comm: received reply");
+                    actionLog_.push_back("[" + TimeNow() + "] Comm: copied text, stopping listen");
                 }
-                Command cmd = ParseCommand(text);
-                if (!cmd.action.empty()) {
-                    ExecuteCommand(cmd);
-                }
+                // TODO: parse/process message here in the future
+                commStop_ = true;
+                state_.commRunning = false;
+                return;
             }
         }
         Sleep(state_.pollIntervalMs);
@@ -568,32 +601,27 @@ void App::CommThread() {
 }
 
 std::string App::ReadChatByClipboard() {
-    if (state_.commChatRegion.width <= 0) return "";
+    return ReadChatAtPosition(
+        state_.commChatRegion.x + state_.commChatRegion.width / 2,
+        state_.commChatRegion.y + state_.commChatRegion.height / 2);
+}
 
-    // Clear clipboard first to detect if Ctrl+C actually wrote new data
+std::string App::ReadChatAtPosition(int absX, int absY) {
+    // Clear clipboard
     if (OpenClipboard(nullptr)) {
         EmptyClipboard();
         CloseClipboard();
     }
     Sleep(50);
 
-    // Double-click center of chat region to select text
-    int cx = state_.commChatRegion.x + state_.commChatRegion.width / 2;
-    int cy = state_.commChatRegion.y + state_.commChatRegion.height / 2;
-    SetCursorPos(cx, cy);
+    // Double-click at the specified position
+    SetCursorPos(absX, absY);
     Sleep(50);
     mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
     mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
     Sleep(50);
     mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
     mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-    Sleep(100);
-
-    // Ctrl+A select all
-    keybd_event(VK_CONTROL, 0, 0, 0);
-    keybd_event('A', 0, 0, 0);
-    keybd_event('A', 0, KEYEVENTF_KEYUP, 0);
-    keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
     Sleep(100);
 
     // Ctrl+C copy
@@ -603,7 +631,7 @@ std::string App::ReadChatByClipboard() {
     keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
     Sleep(200);
 
-    // Read clipboard as Unicode (UTF-16) and convert to UTF-8
+    // Read clipboard
     std::string result;
     if (OpenClipboard(nullptr)) {
         HANDLE hData = GetClipboardData(CF_UNICODETEXT);
