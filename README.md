@@ -159,3 +159,17 @@ build\bin\Debug\test_action.exe
 build\bin\Debug\test_monitor.exe
 build\bin\Debug\test_comm.exe
 ```
+
+
+# CMD
+
+CMD:click:x,y	左键点击	坐标相对于monitor区域
+CMD:dclick:x,y	双击	
+CMD:rclick:x,y	右键点击	
+CMD:move:x,y	移动光标	
+CMD:type:text	输入文字	
+CMD:key:name	按键	enter/tab/esc/space/backspace/delete/up/down/left/right/home/end
+CMD:hotkey:mod+key	组合键	如 ctrl+c, alt+f4, ctrl+shift+s
+CMD:wait:ms	等待	最大10000ms
+CMD:scroll:x,y,delta	滚轮	delta正=上，负=下
+CMD:stop	停止监控	

@@ -57,7 +57,9 @@ private:
     std::string ReadChatByClipboard();
     std::string ReadChatAtPosition(int absX, int absY);
     Command ParseCommand(const std::string& text);
+    std::vector<Command> ParseCommands(const std::string& text);
     void ExecuteCommand(const Command& cmd);
+    void ExecuteCommands(const std::string& text);
 
     void UpdateTexture(ID3D11ShaderResourceView** srv, const cv::Mat& img);
     void FlushPendingFrames();

@@ -9,7 +9,15 @@
       "Bash(echo \"exit: $?\")",
       "Bash(taskkill /f /im gui_app.exe)",
       "Bash(cmd.exe /c \"taskkill /f /im gui_app.exe\")",
-      "Bash(\"C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --build d:/study/code/remoteVscodeClaude/build --config Debug --target gui_app)"
+      "Bash(\"C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --build d:/study/code/remoteVscodeClaude/build --config Debug --target gui_app)",
+      "Bash(build2/bin/Debug/gui_app.exe)",
+      "Bash(echo \"process exited with $?\")",
+      "Bash(find /c/opencv /d/opencv /c/tools -name \"opencv_world4110d.dll\" 2>/dev/null || find / -name \"opencv_world4110d.dll\" 2>/dev/null | head -5)",
+      "Read(//d//**)",
+      "Bash(cp \"C:/Program Files/Opencv/opencv/build/x64/vc16/bin/opencv_world4110d.dll\" \"D:/study/code/remoteVscodeClaude/build2/bin/Debug/\")"
+    ],
+    "additionalDirectories": [
+      "C:\\Program Files\\Opencv\\opencv\\build\\x64\\vc16\\bin"
     ]
   }
 }

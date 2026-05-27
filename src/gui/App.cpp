@@ -3,8 +3,8 @@
 #include <opencv2/imgproc.hpp>
 #include <chrono>
 #include <ctime>
-
 #include <algorithm>
+#include <sstream>
 
 // Inline implementations of the modules (avoid linking plugin DLLs)
 static cv::Mat CaptureScreen(const Rect& rect) {
@@ -418,6 +418,19 @@ void App::MonitorThread() {
                         actionLog_.push_back("[" + TimeNow() + "] ALERT: AI idle, sending screenshot + notification");
                     }
                     SendImageToComm(current);
+                    Sleep(1500);
+                    // Send grid-annotated version
+                    cv::Mat gridImg = current.clone();
+                    int step = 100;
+                    for (int x = step; x < gridImg.cols; x += step)
+                        cv::line(gridImg, {x, 0}, {x, gridImg.rows}, {0, 255, 0}, 1);
+                    for (int y = step; y < gridImg.rows; y += step)
+                        cv::line(gridImg, {0, y}, {gridImg.cols, y}, {0, 255, 0}, 1);
+                    for (int x = 0; x < gridImg.cols; x += step)
+                        for (int y = 0; y < gridImg.rows; y += step)
+                            cv::putText(gridImg, std::to_string(x) + "," + std::to_string(y),
+                                {x + 2, y + 14}, cv::FONT_HERSHEY_PLAIN, 0.8, {0, 0, 255}, 1);
+                    SendImageToComm(gridImg);
                     Sleep(500);
                     SendToComm("AI stopped working - no change for " + std::to_string(elapsedSec) + "s");
                 }
@@ -590,7 +603,7 @@ void App::CommThread() {
                     commLog_.push_back("[" + TimeNow() + "] " + text);
                     actionLog_.push_back("[" + TimeNow() + "] Comm: copied text, stopping listen");
                 }
-                // TODO: parse/process message here in the future
+                ExecuteCommands(text);
                 commStop_ = true;
                 state_.commRunning = false;
                 return;
@@ -614,8 +627,11 @@ std::string App::ReadChatAtPosition(int absX, int absY) {
     }
     Sleep(50);
 
-    // Double-click at the specified position
+    // Triple-click at the specified position
     SetCursorPos(absX, absY);
+    Sleep(50);
+    mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+    mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
     Sleep(50);
     mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
     mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
@@ -645,30 +661,64 @@ std::string App::ReadChatAtPosition(int absX, int absY) {
     return result;
 }
 
-// Command format: "CMD:action:params"
-// CMD:click:x,y    - click at position (relative to monitor region)
-// CMD:type:text    - type text
-// CMD:enter        - press enter
-// CMD:stop         - stop monitoring
-Command App::ParseCommand(const std::string& text) {
-    Command cmd;
-    // Find last CMD: in the text (latest message)
-    size_t pos = text.rfind("CMD:");
-    if (pos == std::string::npos) return cmd;
+// Message format (one command per line, multiple commands executed sequentially):
+//   CMD:click:x,y        - left click at (x,y) relative to monitor region
+//   CMD:dclick:x,y       - double click at (x,y) relative to monitor region
+//   CMD:rclick:x,y       - right click at (x,y) relative to monitor region
+//   CMD:move:x,y         - move cursor to (x,y) relative to monitor region
+//   CMD:type:text        - type text string
+//   CMD:key:name         - press key (enter/tab/esc/space/backspace/delete/up/down/left/right)
+//   CMD:hotkey:mod+key   - press hotkey combo (ctrl+c, alt+f4, ctrl+shift+s, etc.)
+//   CMD:wait:ms          - wait milliseconds
+//   CMD:scroll:x,y,delta - scroll at (x,y) by delta (positive=up, negative=down)
+//   CMD:stop             - stop monitoring
 
-    std::string line = text.substr(pos + 4);
-    // Trim to end of line
-    size_t nl = line.find_first_of("\r\n");
-    if (nl != std::string::npos) line = line.substr(0, nl);
+std::vector<Command> App::ParseCommands(const std::string& text) {
+    std::vector<Command> cmds;
+    size_t pos = 0;
+    while ((pos = text.find("CMD:", pos)) != std::string::npos) {
+        pos += 4;
+        size_t end = text.find_first_of("\r\n", pos);
+        std::string line = (end != std::string::npos) ? text.substr(pos, end - pos) : text.substr(pos);
 
-    size_t colon = line.find(':');
-    if (colon != std::string::npos) {
-        cmd.action = line.substr(0, colon);
-        cmd.params = line.substr(colon + 1);
-    } else {
-        cmd.action = line;
+        Command cmd;
+        size_t colon = line.find(':');
+        if (colon != std::string::npos) {
+            cmd.action = line.substr(0, colon);
+            cmd.params = line.substr(colon + 1);
+        } else {
+            cmd.action = line;
+        }
+        if (!cmd.action.empty()) cmds.push_back(cmd);
     }
-    return cmd;
+    return cmds;
+}
+
+Command App::ParseCommand(const std::string& text) {
+    auto cmds = ParseCommands(text);
+    return cmds.empty() ? Command{} : cmds.back();
+}
+
+static BYTE NameToVK(const std::string& name) {
+    if (name == "enter") return VK_RETURN;
+    if (name == "tab") return VK_TAB;
+    if (name == "esc") return VK_ESCAPE;
+    if (name == "space") return VK_SPACE;
+    if (name == "backspace") return VK_BACK;
+    if (name == "delete") return VK_DELETE;
+    if (name == "up") return VK_UP;
+    if (name == "down") return VK_DOWN;
+    if (name == "left") return VK_LEFT;
+    if (name == "right") return VK_RIGHT;
+    if (name == "home") return VK_HOME;
+    if (name == "end") return VK_END;
+    if (name == "pgup") return VK_PRIOR;
+    if (name == "pgdn") return VK_NEXT;
+    if (name.size() == 1) {
+        SHORT vk = VkKeyScanA(name[0]);
+        return (vk != -1) ? LOBYTE(vk) : 0;
+    }
+    return 0;
 }
 
 void App::ExecuteCommand(const Command& cmd) {
@@ -680,12 +730,34 @@ void App::ExecuteCommand(const Command& cmd) {
     if (cmd.action == "click") {
         int x = 0, y = 0;
         if (sscanf(cmd.params.c_str(), "%d,%d", &x, &y) == 2) {
-            int absX = state_.monitorRegion.x + x;
-            int absY = state_.monitorRegion.y + y;
-            SetCursorPos(absX, absY);
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
             Sleep(50);
             mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
             mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+        }
+    } else if (cmd.action == "dclick") {
+        int x = 0, y = 0;
+        if (sscanf(cmd.params.c_str(), "%d,%d", &x, &y) == 2) {
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
+            Sleep(50);
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            Sleep(50);
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+        }
+    } else if (cmd.action == "rclick") {
+        int x = 0, y = 0;
+        if (sscanf(cmd.params.c_str(), "%d,%d", &x, &y) == 2) {
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
+            Sleep(50);
+            mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
+            mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
+        }
+    } else if (cmd.action == "move") {
+        int x = 0, y = 0;
+        if (sscanf(cmd.params.c_str(), "%d,%d", &x, &y) == 2) {
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
         }
     } else if (cmd.action == "type") {
         for (char c : cmd.params) {
@@ -699,10 +771,46 @@ void App::ExecuteCommand(const Command& cmd) {
             if (shift) keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0);
             Sleep(20);
         }
-    } else if (cmd.action == "enter") {
-        keybd_event(VK_RETURN, 0, 0, 0);
-        keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0);
+    } else if (cmd.action == "key") {
+        BYTE vk = NameToVK(cmd.params);
+        if (vk) {
+            keybd_event(vk, 0, 0, 0);
+            keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
+        }
+    } else if (cmd.action == "hotkey") {
+        // Parse mod+mod+key, e.g. "ctrl+shift+s"
+        std::vector<BYTE> keys;
+        std::string part;
+        std::istringstream ss(cmd.params);
+        while (std::getline(ss, part, '+')) {
+            if (part == "ctrl") keys.push_back(VK_CONTROL);
+            else if (part == "alt") keys.push_back(VK_MENU);
+            else if (part == "shift") keys.push_back(VK_SHIFT);
+            else if (part == "win") keys.push_back(VK_LWIN);
+            else { BYTE vk = NameToVK(part); if (vk) keys.push_back(vk); }
+        }
+        for (BYTE k : keys) keybd_event(k, 0, 0, 0);
+        for (auto it = keys.rbegin(); it != keys.rend(); ++it)
+            keybd_event(*it, 0, KEYEVENTF_KEYUP, 0);
+    } else if (cmd.action == "wait") {
+        int ms = std::atoi(cmd.params.c_str());
+        if (ms > 0 && ms <= 10000) Sleep(ms);
+    } else if (cmd.action == "scroll") {
+        int x = 0, y = 0, delta = 0;
+        if (sscanf(cmd.params.c_str(), "%d,%d,%d", &x, &y, &delta) == 3) {
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
+            Sleep(50);
+            mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta * WHEEL_DELTA, 0);
+        }
     } else if (cmd.action == "stop") {
         StopMonitor();
+    }
+}
+
+void App::ExecuteCommands(const std::string& text) {
+    auto cmds = ParseCommands(text);
+    for (auto& cmd : cmds) {
+        ExecuteCommand(cmd);
+        Sleep(50);
     }
 }
