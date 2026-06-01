@@ -7,6 +7,7 @@ Debug/
 Release/
 x64/
 
+
 # CMake files
 CMakeFiles/
 CMakeCache.txt
@@ -50,6 +51,9 @@ CTestTestfile.cmake
 *.swp
 *.swo
 
+# BIG files
+*.mp4
+
 # Coverage and build artifacts
 coverage/
 *.gcno
@@ -57,6 +61,7 @@ coverage/
 
 # Editor/project settings
 .vscode/
+.claude/
 .idea/
 .DS_Store
 Thumbs.db
