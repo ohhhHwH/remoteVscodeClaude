@@ -757,6 +757,7 @@ void App::ExecuteCommand(const Command& cmd) {
             Sleep(50);
             mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
             mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            Sleep(300);
         }
     } else if (cmd.action == "dclick") {
         int x = 0, y = 0;
@@ -796,12 +797,15 @@ void App::ExecuteCommand(const Command& cmd) {
             }
             CloseClipboard();
         }
-        Sleep(50);
+        Sleep(200);
         keybd_event(VK_CONTROL, 0, 0, 0);
+        Sleep(50);
         keybd_event('V', 0, 0, 0);
+        Sleep(50);
         keybd_event('V', 0, KEYEVENTF_KEYUP, 0);
+        Sleep(50);
         keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
-        Sleep(100);
+        Sleep(200);
     } else if (cmd.action == "key") {
         BYTE vk = NameToVK(cmd.params);
         if (vk) {

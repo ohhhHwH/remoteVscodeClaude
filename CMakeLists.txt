@@ -93,6 +93,12 @@ add_executable(test_action
 target_include_directories(test_action PRIVATE test)
 add_test(NAME Action COMMAND test_action)
 
+add_executable(test_parse_cmd
+    test/test_parse_cmd.cpp
+)
+target_include_directories(test_parse_cmd PRIVATE test)
+add_test(NAME ParseCmd COMMAND test_parse_cmd)
+
 # 依赖OpenCV的测试
 if(OpenCV_FOUND)
     add_executable(test_monitor
