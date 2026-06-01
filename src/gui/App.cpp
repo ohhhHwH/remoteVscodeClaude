@@ -661,35 +661,58 @@ std::string App::ReadChatAtPosition(int absX, int absY) {
     return result;
 }
 
-// Message format (one command per line, multiple commands executed sequentially):
-//   CMD:click:x,y        - left click at (x,y) relative to monitor region
-//   CMD:dclick:x,y       - double click at (x,y) relative to monitor region
-//   CMD:rclick:x,y       - right click at (x,y) relative to monitor region
-//   CMD:move:x,y         - move cursor to (x,y) relative to monitor region
-//   CMD:type:text        - type text string
-//   CMD:key:name         - press key (enter/tab/esc/space/backspace/delete/up/down/left/right)
-//   CMD:hotkey:mod+key   - press hotkey combo (ctrl+c, alt+f4, ctrl+shift+s, etc.)
-//   CMD:wait:ms          - wait milliseconds
-//   CMD:scroll:x,y,delta - scroll at (x,y) by delta (positive=up, negative=down)
-//   CMD:stop             - stop monitoring
+// Message format:
+//   CMD:action:params;action:params;...
+//   Commands separated by semicolons after the CMD: prefix
+//   Example: CMD:click:100,200;type:hello;key:enter;wait:500;click:300,400
+//
+// Supported actions:
+//   click:x,y        - left click at (x,y) relative to monitor region
+//   dclick:x,y       - double click
+//   rclick:x,y       - right click
+//   move:x,y         - move cursor
+//   type:text        - type text string
+//   key:name         - press key (enter/tab/esc/space/backspace/delete/up/down/left/right)
+//   hotkey:mod+key   - hotkey combo (ctrl+c, alt+f4, ctrl+shift+s)
+//   wait:ms          - wait milliseconds (max 10000)
+//   scroll:x,y,delta - scroll wheel (delta: positive=up, negative=down)
+//   stop             - stop monitoring
 
 std::vector<Command> App::ParseCommands(const std::string& text) {
     std::vector<Command> cmds;
+
+    // Find all CMD: occurrences (may span multiple lines)
     size_t pos = 0;
     while ((pos = text.find("CMD:", pos)) != std::string::npos) {
         pos += 4;
+        // Extract until newline or end of text
         size_t end = text.find_first_of("\r\n", pos);
-        std::string line = (end != std::string::npos) ? text.substr(pos, end - pos) : text.substr(pos);
+        std::string segment = (end != std::string::npos) ? text.substr(pos, end - pos) : text.substr(pos);
 
-        Command cmd;
-        size_t colon = line.find(':');
-        if (colon != std::string::npos) {
-            cmd.action = line.substr(0, colon);
-            cmd.params = line.substr(colon + 1);
-        } else {
-            cmd.action = line;
+        // Split by semicolons
+        size_t start = 0;
+        while (start < segment.size()) {
+            size_t semi = segment.find(';', start);
+            std::string token = (semi != std::string::npos)
+                ? segment.substr(start, semi - start)
+                : segment.substr(start);
+            start = (semi != std::string::npos) ? semi + 1 : segment.size();
+
+            if (token.empty()) continue;
+
+            Command cmd;
+            size_t colon = token.find(':');
+            if (colon != std::string::npos) {
+                cmd.action = token.substr(0, colon);
+                cmd.params = token.substr(colon + 1);
+            } else {
+                cmd.action = token;
+            }
+            // Trim whitespace
+            while (!cmd.action.empty() && cmd.action.front() == ' ') cmd.action.erase(0, 1);
+            while (!cmd.action.empty() && cmd.action.back() == ' ') cmd.action.pop_back();
+            if (!cmd.action.empty()) cmds.push_back(cmd);
         }
-        if (!cmd.action.empty()) cmds.push_back(cmd);
     }
     return cmds;
 }
@@ -760,17 +783,25 @@ void App::ExecuteCommand(const Command& cmd) {
             SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
         }
     } else if (cmd.action == "type") {
-        for (char c : cmd.params) {
-            SHORT vk = VkKeyScanA(c);
-            if (vk == -1) continue;
-            BYTE key = LOBYTE(vk);
-            bool shift = (HIBYTE(vk) & 1) != 0;
-            if (shift) keybd_event(VK_SHIFT, 0, 0, 0);
-            keybd_event(key, 0, 0, 0);
-            keybd_event(key, 0, KEYEVENTF_KEYUP, 0);
-            if (shift) keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0);
-            Sleep(20);
+        // Use clipboard paste for reliable Unicode text input
+        if (OpenClipboard(nullptr)) {
+            EmptyClipboard();
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, cmd.params.c_str(), -1, nullptr, 0);
+            HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, wlen * sizeof(wchar_t));
+            if (hGlobal) {
+                wchar_t* dst = (wchar_t*)GlobalLock(hGlobal);
+                MultiByteToWideChar(CP_UTF8, 0, cmd.params.c_str(), -1, dst, wlen);
+                GlobalUnlock(hGlobal);
+                SetClipboardData(CF_UNICODETEXT, hGlobal);
+            }
+            CloseClipboard();
         }
+        Sleep(50);
+        keybd_event(VK_CONTROL, 0, 0, 0);
+        keybd_event('V', 0, 0, 0);
+        keybd_event('V', 0, KEYEVENTF_KEYUP, 0);
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+        Sleep(100);
     } else if (cmd.action == "key") {
         BYTE vk = NameToVK(cmd.params);
         if (vk) {
@@ -811,6 +842,6 @@ void App::ExecuteCommands(const std::string& text) {
     auto cmds = ParseCommands(text);
     for (auto& cmd : cmds) {
         ExecuteCommand(cmd);
-        Sleep(50);
+        Sleep(200);
     }
 }
