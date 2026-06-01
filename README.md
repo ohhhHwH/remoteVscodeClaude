@@ -1,9 +1,4 @@
 
-
-
-input zone
-
-
 # 初版设想
 开发一个app在平板/手机上运行，监听电脑上的事件，并模拟点击/输入操作，实现各个ai终端的监工。
 
@@ -30,7 +25,6 @@ input zone
 ## 手机端
 
 现成的APP（如微信、QQ等）
-
 
 
 # 整体设计
@@ -79,10 +73,6 @@ input zone
 - Windows OCR API
 - nlohmann/json（配置解析）
 
-## 配置
-
-编辑 `config/config.json` 设置监控区域、通信目标窗口等参数。
-
 
 ## 构建
 
@@ -120,20 +110,6 @@ $env:PATH += ";C:\Program Files\Opencv\opencv\build\x64\vc16\bin"
 # 运行GUI
 build\bin\Debug\gui_app.exe
 
-# 运行主控进程
-build\bin\Debug\controller.exe config\config.json
-
-# 运行全部测试
-& "C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/ctest.exe" --test-dir build -C Debug --output-on-failure
-
-# 或单独运行某个测试
-build\bin\Debug\test_eventbus.exe
-build\bin\Debug\test_config.exe
-build\bin\Debug\test_json.exe
-build\bin\Debug\test_ipc.exe
-build\bin\Debug\test_action.exe
-build\bin\Debug\test_monitor.exe
-build\bin\Debug\test_comm.exe
 ```
 
 CMD:
@@ -143,21 +119,6 @@ set PATH=%PATH%;C:\Program Files\Opencv\opencv\build\x64\vc16\bin
 
 :: 运行GUI
 build\bin\Debug\gui_app.exe
-
-:: 运行主控进程
-build\bin\Debug\controller.exe config\config.json
-
-:: 运行全部测试
-"C:/Program1/MS/MStool2022/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/ctest.exe" --test-dir build -C Debug --output-on-failure
-
-:: 或单独运行某个测试
-build\bin\Debug\test_eventbus.exe
-build\bin\Debug\test_config.exe
-build\bin\Debug\test_json.exe
-build\bin\Debug\test_ipc.exe
-build\bin\Debug\test_action.exe
-build\bin\Debug\test_monitor.exe
-build\bin\Debug\test_comm.exe
 ```
 
 
@@ -173,3 +134,7 @@ CMD:hotkey:mod+key	组合键	如 ctrl+c, alt+f4, ctrl+shift+s
 CMD:wait:ms	等待	最大10000ms
 CMD:scroll:x,y,delta	滚轮	delta正=上，负=下
 CMD:stop	停止监控	
+
+```
+CMD:click:300,880;type:继续根todo完成下一个阶段的任务;key:enter
+```
