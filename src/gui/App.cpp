@@ -419,7 +419,7 @@ void App::MonitorThread() {
                     }
                     SendImageToComm(current);
                     Sleep(1500);
-                    // Send grid-annotated version
+                    // Send grid-annotated version (lines every 100px, dots every 25px excluding 100-multiples)
                     cv::Mat gridImg = current.clone();
                     int step = 100;
                     for (int x = step; x < gridImg.cols; x += step)
@@ -430,6 +430,10 @@ void App::MonitorThread() {
                         for (int y = 0; y < gridImg.rows; y += step)
                             cv::putText(gridImg, std::to_string(x) + "," + std::to_string(y),
                                 {x + 2, y + 14}, cv::FONT_HERSHEY_PLAIN, 0.8, {0, 0, 255}, 1);
+                    for (int x = 0; x < gridImg.cols; x += 25)
+                        for (int y = 0; y < gridImg.rows; y += 25)
+                            if (x % 100 != 0 || y % 100 != 0)
+                                cv::circle(gridImg, {x, y}, 1, {0, 255, 0}, -1);
                     SendImageToComm(gridImg);
                     Sleep(500);
                     SendToComm("AI stopped working - no change for " + std::to_string(elapsedSec) + "s");
@@ -846,6 +850,16 @@ void App::ExecuteCommands(const std::string& text) {
     auto cmds = ParseCommands(text);
     for (auto& cmd : cmds) {
         ExecuteCommand(cmd);
-        Sleep(200);
+        Sleep(1000);
+    }
+    // Send a screenshot after all commands executed (no grid)
+    if (!cmds.empty() && state_.monitorRegion.width > 0) {
+        Sleep(500);
+        cv::Mat result = CaptureScreen(state_.monitorRegion);
+        if (!result.empty()) {
+            SendImageToComm(result);
+            std::lock_guard<std::mutex> lk(logMutex_);
+            actionLog_.push_back("[" + TimeNow() + "] Sent post-execution screenshot");
+        }
     }
 }
