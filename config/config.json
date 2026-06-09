@@ -11,5 +11,33 @@
             "height": 600,
             "threshold": 0.05
         }
-    ]
+    ],
+    "strategies": [
+        {
+            "name": "auto_click_continue",
+            "idleTimeoutSec": 20,
+            "enabled": false,
+            "actions": [
+                {"type": "click", "params": "400,500", "delayMs": 500},
+                {"type": "type", "params": "继续完成下一步任务", "delayMs": 500},
+                {"type": "key", "params": "enter", "delayMs": 1000}
+            ]
+        },
+        {
+            "name": "click_yes_on_idle",
+            "idleTimeoutSec": 0,
+            "enabled": false,
+            "actions": [
+                {"type": "click", "params": "400,550", "delayMs": 300},
+                {"type": "wait", "params": "2000", "delayMs": 0}
+            ]
+        }
+    ],
+    "yesDetect": {
+        "enabled": false,
+        "matchThreshold": 0.7,
+        "templateImage": "pic/yes.png",
+        "clickOffsetX": 0,
+        "clickOffsetY": 0
+    }
 }

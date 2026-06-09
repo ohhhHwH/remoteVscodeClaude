@@ -9,11 +9,34 @@ struct RegionConfig {
     double threshold;
 };
 
+struct ActionStepConfig {
+    std::string type;
+    std::string params;
+    int delayMs = 500;
+};
+
+struct StrategyConfig {
+    std::string name;
+    int idleTimeoutSec = 30;                // 0 = run on every check
+    std::vector<ActionStepConfig> actions;
+    bool enabled = true;
+};
+
+struct YesDetectConfig {
+    bool enabled = false;
+    float matchThreshold = 0.7f;
+    std::string templateImage;
+    int clickOffsetX = 0;
+    int clickOffsetY = 0;
+};
+
 struct AppConfig {
     std::vector<RegionConfig> monitorRegions;
-    std::string commTarget;       // QQ/微信窗口标题
-    int pollIntervalMs;           // 监控轮询间隔
-    std::string pluginDir;        // 插件目录
+    std::string commTarget;
+    int pollIntervalMs;
+    std::string pluginDir;
+    std::vector<StrategyConfig> strategies;
+    YesDetectConfig yesDetect;
 };
 
 class Config {

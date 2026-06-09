@@ -1,6 +1,8 @@
 #include "App.h"
+#include "core/Config.h"
 #include "imgui.h"
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <chrono>
 #include <ctime>
 #include <algorithm>
@@ -110,7 +112,10 @@ static LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProc(hwnd, msg, wp, lp);
 }
 
-App::App(ID3D11Device* device) : device_(device) {}
+App::App(ID3D11Device* device) : device_(device) {
+    LoadStrategiesFromFile();
+    LoadYesDetectFromFile();
+}
 
 App::~App() {
     StopMonitor();
@@ -270,6 +275,24 @@ void App::RenderMonitorPanel() {
     }
 
     ImGui::Text("Status: %s", state_.monitorRunning ? "Monitoring" : "Idle");
+
+    ImGui::Separator();
+    ImGui::Text("Strategies: %d loaded", (int)strategies_.size());
+    ImGui::Checkbox("Auto-click Yes", &state_.autoClickYes);
+    if (!yesTemplate_.empty()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0, 1, 0, 1), "(template loaded)");
+    } else if (state_.autoClickYes) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "(no template)");
+    }
+    if (ImGui::CollapsingHeader("Strategy List")) {
+        for (size_t i = 0; i < strategies_.size(); i++) {
+            auto& s = strategies_[i];
+            ImGui::BulletText("%s [idle=%ds] [%s]",
+                s.name.c_str(), s.idleTimeoutSec, s.enabled ? "ON" : "OFF");
+        }
+    }
 }
 
 void App::RenderCommPanel() {
@@ -437,9 +460,18 @@ void App::MonitorThread() {
                     SendImageToComm(gridImg);
                     Sleep(500);
                     SendToComm("AI stopped working - no change for " + std::to_string(elapsedSec) + "s");
+
+                    // Execute custom strategies for idle detection
+                    CheckAndExecuteStrategies(elapsedSec);
                 }
             }
         }
+
+        // Auto-click Yes button detection (runs every cycle when enabled)
+        if (state_.autoClickYes && !yesTemplate_.empty()) {
+            ClickYesIfFound();
+        }
+
         lastFrame = current.clone();
         Sleep(state_.pollIntervalMs);
     }
@@ -862,4 +894,247 @@ void App::ExecuteCommands(const std::string& text) {
             actionLog_.push_back("[" + TimeNow() + "] Sent post-execution screenshot");
         }
     }
+}
+
+// ===== Strategy Execution =====
+
+void App::LoadStrategiesFromFile() {
+    Config config;
+    if (!config.Load("config/config.json")) return;
+    strategies_.clear();
+    for (auto& sc : config.Get().strategies) {
+        Strategy s;
+        s.name = sc.name;
+        s.idleTimeoutSec = sc.idleTimeoutSec;
+        s.enabled = sc.enabled;
+        for (auto& ac : sc.actions) {
+            StrategyAction step;
+            step.type = ac.type;
+            step.params = ac.params;
+            step.delayMs = ac.delayMs;
+            s.actions.push_back(step);
+        }
+        strategies_.push_back(s);
+    }
+}
+
+void App::ExecuteStrategyAction(const StrategyAction& step) {
+    if (step.type == "click") {
+        int x = 0, y = 0;
+        if (sscanf(step.params.c_str(), "%d,%d", &x, &y) == 2) {
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
+            Sleep(50);
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+        }
+    } else if (step.type == "dclick") {
+        int x = 0, y = 0;
+        if (sscanf(step.params.c_str(), "%d,%d", &x, &y) == 2) {
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
+            Sleep(50);
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            Sleep(50);
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+        }
+    } else if (step.type == "rclick") {
+        int x = 0, y = 0;
+        if (sscanf(step.params.c_str(), "%d,%d", &x, &y) == 2) {
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
+            Sleep(50);
+            mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
+            mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
+        }
+    } else if (step.type == "move") {
+        int x = 0, y = 0;
+        if (sscanf(step.params.c_str(), "%d,%d", &x, &y) == 2) {
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
+        }
+    } else if (step.type == "type") {
+        if (OpenClipboard(nullptr)) {
+            EmptyClipboard();
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, step.params.c_str(), -1, nullptr, 0);
+            HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, wlen * sizeof(wchar_t));
+            if (hGlobal) {
+                wchar_t* dst = (wchar_t*)GlobalLock(hGlobal);
+                MultiByteToWideChar(CP_UTF8, 0, step.params.c_str(), -1, dst, wlen);
+                GlobalUnlock(hGlobal);
+                SetClipboardData(CF_UNICODETEXT, hGlobal);
+            }
+            CloseClipboard();
+        }
+        Sleep(200);
+        keybd_event(VK_CONTROL, 0, 0, 0);
+        Sleep(50);
+        keybd_event('V', 0, 0, 0);
+        Sleep(50);
+        keybd_event('V', 0, KEYEVENTF_KEYUP, 0);
+        Sleep(50);
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+    } else if (step.type == "key") {
+        BYTE vk = NameToVK(step.params);
+        if (vk) {
+            keybd_event(vk, 0, 0, 0);
+            keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
+        }
+    } else if (step.type == "hotkey") {
+        std::vector<BYTE> keys;
+        std::string part;
+        std::istringstream ss(step.params);
+        while (std::getline(ss, part, '+')) {
+            if (part == "ctrl") keys.push_back(VK_CONTROL);
+            else if (part == "alt") keys.push_back(VK_MENU);
+            else if (part == "shift") keys.push_back(VK_SHIFT);
+            else if (part == "win") keys.push_back(VK_LWIN);
+            else { BYTE vk = NameToVK(part); if (vk) keys.push_back(vk); }
+        }
+        for (BYTE k : keys) keybd_event(k, 0, 0, 0);
+        for (auto it = keys.rbegin(); it != keys.rend(); ++it)
+            keybd_event(*it, 0, KEYEVENTF_KEYUP, 0);
+    } else if (step.type == "wait") {
+        int ms = std::atoi(step.params.c_str());
+        if (ms > 0 && ms <= 10000) Sleep(ms);
+    } else if (step.type == "scroll") {
+        int x = 0, y = 0, delta = 0;
+        if (sscanf(step.params.c_str(), "%d,%d,%d", &x, &y, &delta) == 3) {
+            SetCursorPos(state_.monitorRegion.x + x, state_.monitorRegion.y + y);
+            Sleep(50);
+            mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta * WHEEL_DELTA, 0);
+        }
+    }
+}
+
+void App::ExecuteStrategy(const Strategy& s) {
+    {
+        std::lock_guard<std::mutex> lk(logMutex_);
+        actionLog_.push_back("[" + TimeNow() + "] Strategy: " + s.name + " (" +
+            std::to_string(s.actions.size()) + " steps)");
+    }
+    for (auto& step : s.actions) {
+        ExecuteStrategyAction(step);
+        if (step.delayMs > 0) Sleep(step.delayMs);
+    }
+    {
+        std::lock_guard<std::mutex> lk(logMutex_);
+        actionLog_.push_back("[" + TimeNow() + "] Strategy: " + s.name + " done");
+    }
+}
+
+void App::CheckAndExecuteStrategies(int elapsedSec) {
+    for (auto& s : strategies_) {
+        if (!s.enabled) continue;
+        // idleTimeoutSec == 0 means run on every idle alert
+        if (s.idleTimeoutSec > 0 && elapsedSec < s.idleTimeoutSec) continue;
+        // Prevent re-triggering the same strategy within the same idle period
+        if (elapsedSec - s.lastExecutedAtSec < s.idleTimeoutSec && s.lastExecutedAtSec > 0) continue;
+
+        s.lastExecutedAtSec = elapsedSec;
+        ExecuteStrategy(s);
+
+        // Send result screenshot after strategy execution
+        if (state_.monitorRegion.width > 0) {
+            Sleep(500);
+            cv::Mat result = CaptureScreen(state_.monitorRegion);
+            if (!result.empty()) {
+                SendImageToComm(result);
+            }
+        }
+    }
+}
+
+// ===== Yes Button Detection =====
+
+void App::LoadYesDetectFromFile() {
+    Config config;
+    if (!config.Load("config/config.json")) return;
+    auto& yd = config.Get().yesDetect;
+
+    state_.autoClickYes = yd.enabled;
+    yesMatchThreshold_ = yd.matchThreshold;
+    yesClickOffsetX_ = yd.clickOffsetX;
+    yesClickOffsetY_ = yd.clickOffsetY;
+
+    // Load template image
+    yesTemplate_ = cv::Mat();
+    if (!yd.templateImage.empty()) {
+        yesTemplate_ = cv::imread(yd.templateImage, cv::IMREAD_COLOR);
+        if (!yesTemplate_.empty()) {
+            std::lock_guard<std::mutex> lk(logMutex_);
+            actionLog_.push_back("[" + TimeNow() + "] Yes template loaded: " +
+                yd.templateImage + " (" + std::to_string(yesTemplate_.cols) + "x" +
+                std::to_string(yesTemplate_.rows) + ")");
+        }
+    }
+}
+
+POINT App::DetectYesButton(const cv::Mat& screenshot) {
+    POINT result = {-1, -1};
+    if (yesTemplate_.empty() || screenshot.empty()) return result;
+    if (yesTemplate_.cols > screenshot.cols || yesTemplate_.rows > screenshot.rows) return result;
+
+    // Multi-scale template matching
+    double bestVal = 0.0;
+    cv::Point bestLoc(0, 0);
+
+    float scales[] = {0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f};
+
+    for (float scale : scales) {
+        int sw = (int)(yesTemplate_.cols * scale);
+        int sh = (int)(yesTemplate_.rows * scale);
+        if (sw <= 0 || sh <= 0 || sw > screenshot.cols || sh > screenshot.rows) continue;
+
+        cv::Mat scaled;
+        cv::resize(yesTemplate_, scaled, cv::Size(sw, sh));
+
+        cv::Mat matchResult;
+        cv::matchTemplate(screenshot, scaled, matchResult, cv::TM_CCOEFF_NORMED);
+
+        double minVal, maxVal;
+        cv::Point minLoc, maxLoc;
+        cv::minMaxLoc(matchResult, &minVal, &maxVal, &minLoc, &maxLoc);
+
+        if (maxVal > bestVal) {
+            bestVal = maxVal;
+            bestLoc = maxLoc;
+            // Store center point of matched region
+            result.x = maxLoc.x + sw / 2;
+            result.y = maxLoc.y + sh / 2;
+        }
+    }
+
+    if (bestVal >= yesMatchThreshold_) {
+        result.x += yesClickOffsetX_;
+        result.y += yesClickOffsetY_;
+        return result;
+    }
+    return {-1, -1};
+}
+
+bool App::ClickYesIfFound() {
+    if (state_.monitorRegion.width <= 0) return false;
+
+    cv::Mat screenshot = CaptureScreen(state_.monitorRegion);
+    if (screenshot.empty()) return false;
+
+    POINT pt = DetectYesButton(screenshot);
+    if (pt.x < 0 || pt.y < 0) return false;
+
+    // Convert to screen coordinates and click
+    int screenX = state_.monitorRegion.x + pt.x;
+    int screenY = state_.monitorRegion.y + pt.y;
+
+    {
+        std::lock_guard<std::mutex> lk(logMutex_);
+        actionLog_.push_back("[" + TimeNow() + "] Auto-click Yes at (" +
+            std::to_string(pt.x) + "," + std::to_string(pt.y) + ")");
+    }
+
+    SetCursorPos(screenX, screenY);
+    Sleep(50);
+    mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+    Sleep(30);
+    mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+
+    return true;
 }

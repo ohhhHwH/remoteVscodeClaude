@@ -40,6 +40,7 @@ if(OpenCV_FOUND)
     add_executable(gui_app WIN32
         src/gui/main_gui.cpp
         src/gui/App.cpp
+        src/core/Config.cpp
         third_party/imgui/imgui.cpp
         third_party/imgui/imgui_draw.cpp
         third_party/imgui/imgui_tables.cpp
@@ -99,6 +100,14 @@ add_executable(test_parse_cmd
 target_include_directories(test_parse_cmd PRIVATE test)
 add_test(NAME ParseCmd COMMAND test_parse_cmd)
 
+# New tests: strategy parsing + yes detection
+add_executable(test_strategy_parse
+    test/test_strategy_parse.cpp
+    src/core/Config.cpp
+)
+target_include_directories(test_strategy_parse PRIVATE test)
+add_test(NAME StrategyParse COMMAND test_strategy_parse)
+
 # 依赖OpenCV的测试
 if(OpenCV_FOUND)
     add_executable(test_monitor
@@ -114,4 +123,11 @@ if(OpenCV_FOUND)
     target_include_directories(test_comm PRIVATE test)
     target_link_libraries(test_comm ${OpenCV_LIBS})
     add_test(NAME Comm COMMAND test_comm)
+
+    add_executable(test_yes_detect
+        test/test_yes_detect.cpp
+    )
+    target_include_directories(test_yes_detect PRIVATE test)
+    target_link_libraries(test_yes_detect ${OpenCV_LIBS})
+    add_test(NAME YesDetect COMMAND test_yes_detect)
 endif()

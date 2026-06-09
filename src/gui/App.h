@@ -22,6 +22,23 @@ struct AppState {
     int noChangeTimeoutSec = 10;
     bool monitorRunning = false;
     bool commRunning = false;
+    bool autoClickYes = false;   // GUI toggle for Yes detection
+};
+
+// Runtime action step (mirrors ActionStepConfig)
+struct StrategyAction {
+    std::string type;
+    std::string params;
+    int delayMs = 500;
+};
+
+// Runtime strategy (mirrors StrategyConfig)
+struct Strategy {
+    std::string name;
+    int idleTimeoutSec = 30;
+    std::vector<StrategyAction> actions;
+    bool enabled = true;
+    int lastExecutedAtSec = -999;
 };
 
 // Command format: "CMD:action:params"
@@ -61,6 +78,19 @@ private:
     void ExecuteCommand(const Command& cmd);
     void ExecuteCommands(const std::string& text);
 
+    // Strategy execution
+    void LoadStrategiesFromFile();
+    void ExecuteStrategy(const Strategy& s);
+    void CheckAndExecuteStrategies(int elapsedSec);
+
+    // Yes button detection
+    void LoadYesDetectFromFile();
+    POINT DetectYesButton(const cv::Mat& screenshot);
+    bool ClickYesIfFound();
+
+private:
+    void ExecuteStrategyAction(const StrategyAction& step);
+
     void UpdateTexture(ID3D11ShaderResourceView** srv, const cv::Mat& img);
     void FlushPendingFrames();
 
@@ -96,4 +126,13 @@ private:
     std::vector<std::string> monitorLog_;
     std::vector<std::string> commLog_;
     std::vector<std::string> actionLog_;
+
+    // Strategy
+    std::vector<Strategy> strategies_;
+
+    // Yes detection
+    cv::Mat yesTemplate_;           // cached template image
+    float yesMatchThreshold_ = 0.7f;
+    int yesClickOffsetX_ = 0;
+    int yesClickOffsetY_ = 0;
 };
