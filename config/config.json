@@ -39,5 +39,10 @@
         "templateImage": "pic/yes.png",
         "clickOffsetX": 0,
         "clickOffsetY": 0
+    },
+    "listenMode": {
+        "defaultMode": "AI",
+        "autoSwitchOnIdle": true,
+        "idleKeepAliveSec": 600
     }
 }

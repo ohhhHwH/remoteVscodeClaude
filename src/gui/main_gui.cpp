@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "App.h"
+#include "core/CrashGuard.h"
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
@@ -70,6 +71,10 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
+    // Install crash guard FIRST — before any other code that might crash.
+    // Dumps saved to logs/crash_YYYYMMDD_HHMMSS.dmp + .txt
+    CrashGuard::Install(nullptr, "logs");
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     WNDCLASSEXW wc = {sizeof(wc), CS_CLASSDC, WndProc, 0, 0, hInstance, nullptr, nullptr, nullptr, nullptr, L"RemoteMonitorGUI", nullptr};
@@ -100,6 +105,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 16.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
 
     App app(g_pd3dDevice);
+
+    // Register log provider so crash reports include recent log entries
+    CrashGuard::SetLogProvider([&app]() -> std::string {
+        std::string log;
+        auto entries = app.GetLogger().GetRecent(100);
+        for (auto& e : entries) {
+            log += e.formatted + "\n";
+        }
+        return log;
+    });
+
     ImVec4 clearColor = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
 
     bool running = true;

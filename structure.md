@@ -188,6 +188,57 @@ namespace json {
 }
 ```
 
+#### [Logger.h](include/core/Logger.h)
+
+**日志系统**（线程安全文件+内存双写）。
+
+```cpp
+enum class LogLevel { Debug, Info, Warn, Error };
+
+struct LogEntry {
+    LogLevel level;
+    string category;
+    string message;
+    string formatted;  // [YYYY-MM-DD HH:MM:SS] [LEVEL] [Category] message
+    time_t timestamp;
+};
+
+class Logger {
+    bool Init(const string& logDir, LogLevel level, int maxSizeMB);
+    void Log(LogLevel level, const string& category, const string& message);
+    void Debug/Info/Warn/Error(const string& category, const string& msg);
+
+    vector<LogEntry> GetRecent(int count = 50) const;
+    vector<LogEntry> GetByCategory(const string& category, int count = 50) const;
+    vector<LogEntry> GetByLevel(LogLevel minLevel, int count = 50) const;
+
+    void SetLevel(LogLevel level);
+    LogLevel GetLevel() const;
+    void Flush();
+};
+// 文件输出：logs/RemoteMonitor_YYYYMMDD.log，按天滚动 + 10MB 自动切分
+// 内存缓冲：deque<LogEntry>，最多 2000 条环形缓冲
+// 线程安全：内部 mutex
+```
+
+#### [CrashGuard.h](include/core/CrashGuard.h)
+
+**异常守护/崩溃现场保存**（全静态类）。拦截 SEH 异常 + CRT abort + 纯虚调用 + 无效参数，生成 minidump + 文本报告。
+
+```cpp
+using CrashLogProvider = std::function<std::string()>;
+
+class CrashGuard {
+public:
+    static void Install(const CrashLogProvider& logProvider, const string& dumpDir);
+    static void SetLogProvider(const CrashLogProvider& logProvider);
+    static void TestCrash();
+};
+// 捕获：SEH(SetUnhandledExceptionFilter) + abort(signal) + 纯虚(_set_purecall_handler)
+//       + 无效参数(_set_invalid_parameter_handler) + 抑制abort对话框(_set_abort_behavior)
+// 输出：logs/crash_YYYYMMDD_HHMMSS.dmp (minidump) + .txt (异常信息+寄存器+日志)
+```
+
 #### [PluginManager.h](include/core/PluginManager.h)
 
 **DLL 插件加载/卸载管理**。
@@ -309,6 +360,14 @@ class IRegionMonitor {
 
 `IPC` 实现。服务端用 `CreateNamedPipeA` + `ConnectNamedPipe`；客户端用 `CreateFileA` 打开管道。`Send`/`Receive` 使用 `WriteFile`/`ReadFile`，缓冲区大小 4096 字节。
 
+#### [Logger.cpp](src/core/Logger.cpp)
+
+`Logger` 实现。`Init` 创建 `logs/` 目录，`Log` 格式化 `[日期时间] [级别] [分类] 消息` 并同时写入内存缓冲（deque，最多 2000 条）和日志文件。`CheckRotation` 按天轮转 + 超过 `maxSizeMB_` 自动切分。所有公开方法线程安全（内部 mutex）。
+
+#### [CrashGuard.cpp](src/core/CrashGuard.cpp)
+
+`CrashGuard` 实现。`Install` 安装 4 种异常处理器，`WriteCrashDump` 在崩溃时写入 minidump（`MiniDumpWriteDump` via dbghelp.dll）+ 文本报告（异常类型/地址/寄存器/最近日志）。`TestCrash` 生成无害测试报告。
+
 ### 4.2 `src/action/`
 
 #### [Win32Action.cpp](src/action/Win32Action.cpp)
@@ -375,6 +434,9 @@ class IRegionMonitor {
 **App 类声明**。核心数据结构：
 
 ```cpp
+enum class ListenMode { AI, User };
+enum class UserModeTrigger { Idle, Manual };
+
 struct AppState {
     Rect monitorRegion;       // 监控区域（屏幕坐标）
     Rect commInputRegion;     // 通信输入框区域（粘贴位置）
@@ -385,10 +447,12 @@ struct AppState {
     int noChangeTimeoutSec;   // 无变化超时触发告警，默认 10s
     bool monitorRunning;      // 监控线程运行状态
     bool commRunning;         // 通信监听线程运行状态
+    ListenMode listenMode;    // 当前监听模式
+    UserModeTrigger userModeTrigger; // User 模式进入原因
 };
 
 struct Command { string action; string params; };
-// action 支持: click/dclick/rclick/move/type/key/hotkey/wait/scroll/stop
+// action 支持: click/dclick/rclick/move/type/key/hotkey/wait/scroll/stop/mode
 ```
 
 **App 类方法清单**：
@@ -404,7 +468,9 @@ struct Command { string action; string params; };
 | `RenderLogPanel()` | private | 底面板：操作日志 |
 | `StartMonitor()/StopMonitor()` | private | 启停监控线程 |
 | `StartComm()/StopComm()` | private | 启停通信线程 |
-| `MonitorThread()` | private | 监控线程体：截图→帧差→超时告警 |
+| `SetListenMode(mode, trigger)` | private | 统一模式切换：AI↔User，管理线程启停 |
+| `OnCommandsExecuted(bool)` | private | 命令执行后决策：idle触发回AI / manual留在User |
+| `MonitorThread()` | private | 监控线程体：截图→帧差→超时告警→切User模式 |
 | `CommThread()` | private | 通信线程体：截图→检测变化→读取回复→执行命令 |
 | `SendToComm(text)` | private | 剪贴板粘贴文本到输入框→Enter 发送 |
 | `SendImageToComm(image)` | private | 剪贴板粘贴图片(CF_DIB)→Enter 发送 |
@@ -452,6 +518,7 @@ struct Command { string action; string params; };
 | `wait` | `CMD:wait:ms` | 等待毫秒（最大 10000ms） |
 | `scroll` | `CMD:scroll:x,y,delta` | 滚轮（delta > 0 向上） |
 | `stop` | `CMD:stop` | 停止监控 |
+| `mode` | `CMD:mode:ai` / `CMD:mode:user` | 切换监听模式 |
 
 **数据流**：
 ```
@@ -485,6 +552,9 @@ RunAllTests() → int                   // 返回 0=全部通过，1=有失败
 | `test_parse_cmd.cpp` | `CMD:action:params` 命令解析 | 无 |
 | `test_monitor.cpp` | `IScreenCapture`/`IRegionMonitor` | OpenCV |
 | `test_comm.cpp` | `ICommunicator`/`IOCR` | OpenCV |
+| `test_strategy_parse.cpp` | `StrategyConfig` JSON 解析 | 无 |
+| `test_yes_detect.cpp` | Yes 按钮模板匹配检测 | OpenCV |
+| `test_logger.cpp` | `Logger` 完整功能 | 无 |
 
 ---
 
@@ -597,4 +667,5 @@ RunAllTests() → int                   // 返回 0=全部通过，1=有失败
 | OCR 实现 | [OCREngine.cpp](src/comm/OCREngine.cpp) |
 | 操作模拟实现 | [Win32Action.cpp](src/action/Win32Action.cpp) |
 | 配置格式 | [config.json](config/config.json) + [Config.h](include/core/Config.h) |
-| 当前待办/Bug | [TODO](TODO) |
+| 日志系统 | [Logger.h](include/core/Logger.h) + [Logger.cpp](src/core/Logger.cpp) |
+| 当前待办/Bug | [TODO](TODO) | [TODO.md](TODO.md) |

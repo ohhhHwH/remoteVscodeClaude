@@ -4,6 +4,7 @@
 #include "monitor/IRegionMonitor.h"
 #include "comm/IOCR.h"
 #include "action/IActionExecutor.h"
+#include "core/Logger.h"
 #include <opencv2/core.hpp>
 #include <d3d11.h>
 #include <string>
@@ -11,6 +12,10 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+
+// ListenMode: controls what the app is paying attention to
+enum class ListenMode { AI, User };
+enum class UserModeTrigger { Idle, Manual };  // how User mode was entered
 
 struct AppState {
     Rect monitorRegion{0, 0, 0, 0};
@@ -23,6 +28,8 @@ struct AppState {
     bool monitorRunning = false;
     bool commRunning = false;
     bool autoClickYes = false;   // GUI toggle for Yes detection
+    ListenMode listenMode = ListenMode::AI;
+    UserModeTrigger userModeTrigger = UserModeTrigger::Idle;
 };
 
 // Runtime action step (mirrors ActionStepConfig)
@@ -55,6 +62,7 @@ public:
 
     void Render();
     void SelectRegion(Rect& outRect, HWND parentHwnd);
+    const Logger& GetLogger() const { return logger_; }   // for CrashGuard log provider
 
 private:
     void RenderMonitorPanel();
@@ -82,6 +90,10 @@ private:
     void LoadStrategiesFromFile();
     void ExecuteStrategy(const Strategy& s);
     void CheckAndExecuteStrategies(int elapsedSec);
+
+    // ListenMode management
+    void SetListenMode(ListenMode mode, UserModeTrigger trigger = UserModeTrigger::Idle);
+    void OnCommandsExecuted(bool hasModeCmd);
 
     // Yes button detection
     void LoadYesDetectFromFile();
@@ -121,11 +133,11 @@ private:
     std::string pendingSend_;
     bool suppressNextRead_ = false; // set after we send so CommThread skips one cycle
 
-    // Logs
-    std::mutex logMutex_;
-    std::vector<std::string> monitorLog_;
-    std::vector<std::string> commLog_;
-    std::vector<std::string> actionLog_;
+    // Logger — file + in-memory, thread-safe
+    Logger logger_;
+
+    // Log category filter for GUI (0=All, 1=Monitor, 2=Comm, 3=Action)
+    int logCategoryFilter_ = 0;
 
     // Strategy
     std::vector<Strategy> strategies_;

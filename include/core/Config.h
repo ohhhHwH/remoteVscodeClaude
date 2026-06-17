@@ -30,6 +30,12 @@ struct YesDetectConfig {
     int clickOffsetY = 0;
 };
 
+struct ListenModeConfig {
+    std::string defaultMode = "AI";   // "AI" or "User"
+    bool autoSwitchOnIdle = true;     // AI idle → auto-switch to User
+    int idleKeepAliveSec = 600;       // AI mode: heartbeat status every N sec
+};
+
 struct AppConfig {
     std::vector<RegionConfig> monitorRegions;
     std::string commTarget;
@@ -37,6 +43,7 @@ struct AppConfig {
     std::string pluginDir;
     std::vector<StrategyConfig> strategies;
     YesDetectConfig yesDetect;
+    ListenModeConfig listenMode;
 };
 
 class Config {

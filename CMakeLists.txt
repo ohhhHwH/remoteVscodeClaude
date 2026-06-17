@@ -41,6 +41,8 @@ if(OpenCV_FOUND)
         src/gui/main_gui.cpp
         src/gui/App.cpp
         src/core/Config.cpp
+        src/core/Logger.cpp
+        src/core/CrashGuard.cpp
         third_party/imgui/imgui.cpp
         third_party/imgui/imgui_draw.cpp
         third_party/imgui/imgui_tables.cpp
@@ -52,7 +54,7 @@ if(OpenCV_FOUND)
         third_party/imgui
         third_party/imgui/backends
     )
-    target_link_libraries(gui_app ${OpenCV_LIBS} d3d11 dxgi)
+    target_link_libraries(gui_app ${OpenCV_LIBS} d3d11 dxgi dbghelp)
 else()
     message(STATUS "OpenCV not found - building tests only")
 endif()
@@ -99,6 +101,13 @@ add_executable(test_parse_cmd
 )
 target_include_directories(test_parse_cmd PRIVATE test)
 add_test(NAME ParseCmd COMMAND test_parse_cmd)
+
+add_executable(test_logger
+    test/test_logger.cpp
+    src/core/Logger.cpp
+)
+target_include_directories(test_logger PRIVATE test)
+add_test(NAME Logger COMMAND test_logger)
 
 # New tests: strategy parsing + yes detection
 add_executable(test_strategy_parse

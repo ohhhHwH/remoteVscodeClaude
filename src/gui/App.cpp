@@ -113,6 +113,8 @@ static LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 App::App(ID3D11Device* device) : device_(device) {
+    logger_.Init("logs", LogLevel::Debug);
+    logger_.Info("System", "GUI app started");
     LoadStrategiesFromFile();
     LoadYesDetectFromFile();
 }
@@ -235,6 +237,29 @@ void App::FlushPendingFrames() {
 }
 
 void App::RenderMonitorPanel() {
+    // ListenMode indicator and toggle
+    const char* modeText = (state_.listenMode == ListenMode::AI) ? "AI" : "User";
+    ImVec4 modeColor = (state_.listenMode == ListenMode::AI)
+        ? ImVec4(0.3f, 0.8f, 0.3f, 1.0f)   // green for AI
+        : ImVec4(0.8f, 0.5f, 0.2f, 1.0f);   // orange for User
+    ImGui::Text("Mode: ");
+    ImGui::SameLine();
+    ImGui::TextColored(modeColor, "%s", modeText);
+    ImGui::SameLine();
+    const char* triggerLabel = (state_.userModeTrigger == UserModeTrigger::Idle) ? "(idle)" : "(manual)";
+    ImGui::TextDisabled("%s", triggerLabel);
+
+    ImGui::SameLine();
+    if (state_.listenMode == ListenMode::AI) {
+        if (ImGui::SmallButton("Switch to User")) {
+            SetListenMode(ListenMode::User, UserModeTrigger::Manual);
+        }
+    } else {
+        if (ImGui::SmallButton("Switch to AI")) {
+            SetListenMode(ListenMode::AI, UserModeTrigger::Manual);
+        }
+    }
+
     ImGui::Text("Monitor Zone");
     ImGui::Separator();
 
@@ -266,15 +291,19 @@ void App::RenderMonitorPanel() {
     ImGui::SliderInt("Poll (ms)", &state_.pollIntervalMs, 100, 5000);
     ImGui::SliderInt("Idle Timeout (s)", &state_.noChangeTimeoutSec, 10, 300);
 
-    if (!state_.monitorRunning) {
+    if (!state_.monitorRunning && state_.listenMode == ListenMode::User) {
+        ImGui::TextDisabled("Monitor paused (User mode)");
+    } else if (!state_.monitorRunning) {
         if (ImGui::Button("Start Monitor") && state_.monitorRegion.width > 0)
-            StartMonitor();
+            SetListenMode(ListenMode::AI);
     } else {
         if (ImGui::Button("Stop Monitor"))
-            StopMonitor();
+            SetListenMode(ListenMode::User, UserModeTrigger::Manual);
     }
 
-    ImGui::Text("Status: %s", state_.monitorRunning ? "Monitoring" : "Idle");
+    const char* statusText = state_.monitorRunning ? "Monitoring" :
+        (state_.listenMode == ListenMode::User ? "Listening for commands" : "Idle");
+    ImGui::Text("Status: %s", statusText);
 
     ImGui::Separator();
     ImGui::Text("Strategies: %d loaded", (int)strategies_.size());
@@ -356,30 +385,59 @@ void App::RenderCommPanel() {
     ImGui::Spacing();
     if (!state_.commRunning) {
         if (ImGui::Button("Start Listen") && state_.commChatRegion.width > 0)
-            StartComm();
+            SetListenMode(ListenMode::User, UserModeTrigger::Manual);
     } else {
         if (ImGui::Button("Stop Listen"))
-            StopComm();
+            SetListenMode(ListenMode::AI);
     }
 
-    ImGui::Text("Status: %s", state_.commRunning ? "Listening" : "Idle");
+    const char* commStatus = state_.commRunning ? "Listening" :
+        (state_.listenMode == ListenMode::AI ? "Paused (AI mode)" : "Idle");
+    ImGui::Text("Status: %s", commStatus);
 
     ImGui::Separator();
     ImGui::Text("Received:");
-    std::lock_guard<std::mutex> lk(logMutex_);
-    for (int i = (int)commLog_.size() - 1; i >= 0 && i >= (int)commLog_.size() - 10; i--)
-        ImGui::TextWrapped("%s", commLog_[i].c_str());
+    auto commEntries = logger_.GetByCategory("Comm", 10);
+    for (auto& e : commEntries)
+        ImGui::TextWrapped("%s", e.message.c_str());
 }
 
 void App::RenderLogPanel() {
-    ImGui::Text("Action Log");
+    // Category filter combo
+    const char* filters[] = {"All", "Monitor", "Comm", "Action"};
+    ImGui::SetNextItemWidth(100);
+    ImGui::Combo("Filter", &logCategoryFilter_, filters, 4);
+    ImGui::SameLine();
+    ImGui::Text("Log");
     ImGui::Separator();
-    std::lock_guard<std::mutex> lk(logMutex_);
-    for (int i = (int)actionLog_.size() - 1; i >= 0 && i >= (int)actionLog_.size() - 8; i--)
-        ImGui::TextWrapped("%s", actionLog_[i].c_str());
+
+    // Build log dir status line
+    if (logger_.IsEnabled()) {
+        ImGui::SameLine();
+        float availX = ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPosX(availX > 200 ? ImGui::GetCursorPosX() + availX - 200 : ImGui::GetCursorPosX());
+        ImGui::TextDisabled("logs: %s", logger_.GetLogDir().c_str());
+    }
+
+    std::vector<LogEntry> entries;
+    if (logCategoryFilter_ == 0) {
+        entries = logger_.GetRecent(20);
+    } else {
+        entries = logger_.GetByCategory(filters[logCategoryFilter_], 20);
+    }
+    for (auto& e : entries)
+        ImGui::TextWrapped("%s", e.formatted.c_str());
 }
 
 void App::StartMonitor() {
+    if (monitorThread_.joinable()) {
+        if (monitorThread_.get_id() == std::this_thread::get_id()) {
+            monitorThread_.detach();  // can't join ourselves
+        } else {
+            monitorStop_ = true;
+            monitorThread_.join();
+        }
+    }
     monitorStop_ = false;
     state_.monitorRunning = true;
     monitorThread_ = std::thread(&App::MonitorThread, this);
@@ -393,8 +451,12 @@ void App::StopMonitor() {
 
 void App::StartComm() {
     if (commThread_.joinable()) {
-        commStop_ = true;
-        commThread_.join();
+        if (commThread_.get_id() == std::this_thread::get_id()) {
+            commThread_.detach();  // can't join ourselves
+        } else {
+            commStop_ = true;
+            commThread_.join();
+        }
     }
     commStop_ = false;
     state_.commRunning = true;
@@ -405,6 +467,49 @@ void App::StopComm() {
     commStop_ = true;
     state_.commRunning = false;
     if (commThread_.joinable()) commThread_.join();
+}
+
+// ===== ListenMode management =====
+
+void App::SetListenMode(ListenMode mode, UserModeTrigger trigger) {
+    if (mode == ListenMode::AI) {
+        if (state_.listenMode == ListenMode::AI && state_.monitorRunning) return; // no change
+        // Signal CommThread to stop — do NOT join (caller may be CommThread itself)
+        commStop_ = true;
+        state_.commRunning = false;
+        state_.listenMode = ListenMode::AI;
+        state_.userModeTrigger = trigger;
+        if (state_.monitorRegion.width > 0 && !state_.monitorRunning) StartMonitor();
+        logger_.Info("ListenMode", "Switched to AI mode (trigger=" +
+            std::string(trigger == UserModeTrigger::Idle ? "Idle" : "Manual") + ")");
+    } else {
+        if (state_.listenMode == ListenMode::User && state_.commRunning) return; // no change
+        // Signal MonitorThread to stop — do NOT join (caller may be MonitorThread itself)
+        monitorStop_ = true;
+        state_.monitorRunning = false;
+        state_.listenMode = ListenMode::User;
+        state_.userModeTrigger = trigger;
+        if (!state_.commRunning && state_.commChatRegion.width > 0) StartComm();
+        logger_.Info("ListenMode", "Switched to User mode (trigger=" +
+            std::string(trigger == UserModeTrigger::Idle ? "Idle" : "Manual") + ")");
+    }
+}
+
+void App::OnCommandsExecuted(bool hasModeCmd) {
+    if (hasModeCmd) {
+        // CMD:mode:ai or CMD:mode:user was explicitly set — already handled in ExecuteCommand.
+        // CommThread will check listenMode after returning and either continue or exit.
+        logger_.Info("ListenMode", "Mode command handled inline");
+        return;
+    }
+    if (state_.listenMode == ListenMode::User &&
+        state_.userModeTrigger == UserModeTrigger::Idle) {
+        // Idle-triggered User mode → auto-return to AI after command execution
+        // CommThread will see listenMode changed and exit naturally
+        logger_.Info("ListenMode", "Idle-triggered User: auto-returning to AI mode");
+        SetListenMode(ListenMode::AI, UserModeTrigger::Idle);
+    }
+    // Manual-triggered User mode: CommThread handles its own lifecycle (continues loop)
 }
 
 void App::MonitorThread() {
@@ -428,18 +533,14 @@ void App::MonitorThread() {
             if (ratio > state_.threshold) {
                 lastChangeTime = std::chrono::steady_clock::now();
                 alerted = false;
-                std::lock_guard<std::mutex> lk(logMutex_);
-                monitorLog_.push_back("[" + TimeNow() + "] Change: " + std::to_string((int)(ratio * 100)) + "%");
+                logger_.Info("Monitor", "Change: " + std::to_string((int)(ratio * 100)) + "%");
             } else if (!alerted) {
                 auto elapsed = std::chrono::steady_clock::now() - lastChangeTime;
                 int elapsedSec = (int)std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
                 if (elapsedSec >= state_.noChangeTimeoutSec) {
                     alerted = true;
-                    {
-                        std::lock_guard<std::mutex> lk(logMutex_);
-                        monitorLog_.push_back("[" + TimeNow() + "] NO CHANGE " + std::to_string(elapsedSec) + "s - alert!");
-                        actionLog_.push_back("[" + TimeNow() + "] ALERT: AI idle, sending screenshot + notification");
-                    }
+                    logger_.Warn("Monitor", "NO CHANGE " + std::to_string(elapsedSec) + "s - alert!");
+                    logger_.Info("Action", "ALERT: AI idle, sending screenshot + notification");
                     SendImageToComm(current);
                     Sleep(1500);
                     // Send grid-annotated version (lines every 100px, dots every 25px excluding 100-multiples)
@@ -463,6 +564,9 @@ void App::MonitorThread() {
 
                     // Execute custom strategies for idle detection
                     CheckAndExecuteStrategies(elapsedSec);
+
+                    // Switch to User mode to listen for remote commands
+                    SetListenMode(ListenMode::User, UserModeTrigger::Idle);
                 }
             }
         }
@@ -526,10 +630,7 @@ void App::SendImageToComm(const cv::Mat& image) {
     keybd_event(VK_RETURN, 0, 0, 0);
     keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0);
 
-    {
-        std::lock_guard<std::mutex> lk(logMutex_);
-        actionLog_.push_back("[" + TimeNow() + "] Sent screenshot to comm");
-    }
+    logger_.Info("Action", "Sent screenshot to comm");
 }
 
 void App::SendToComm(const std::string& text) {
@@ -556,10 +657,7 @@ void App::SendToComm(const std::string& text) {
     // Click center of input region to focus it
     int cx = state_.commInputRegion.x + state_.commInputRegion.width / 2;
     int cy = state_.commInputRegion.y + state_.commInputRegion.height / 2;
-    {
-        std::lock_guard<std::mutex> lk(logMutex_);
-        actionLog_.push_back("[" + TimeNow() + "] Click input at (" + std::to_string(cx) + "," + std::to_string(cy) + ")");
-    }
+    logger_.Debug("Action", "Click input at (" + std::to_string(cx) + "," + std::to_string(cy) + ")");
     SetCursorPos(cx, cy);
     Sleep(100);
     mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
@@ -577,10 +675,7 @@ void App::SendToComm(const std::string& text) {
     keybd_event(VK_RETURN, 0, 0, 0);
     keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0);
 
-    {
-        std::lock_guard<std::mutex> lk(logMutex_);
-        actionLog_.push_back("[" + TimeNow() + "] Sent: \"" + text + "\"");
-    }
+    logger_.Info("Action", "Sent: \"" + text + "\"");
 
     // Suppress the next CommThread read cycle — the chat change was caused by us
     {
@@ -588,11 +683,10 @@ void App::SendToComm(const std::string& text) {
         suppressNextRead_ = true;
     }
 
-    // Auto-start listening for reply
-    if (!state_.commRunning && state_.commChatRegion.width > 0) {
-        StartComm();
-        std::lock_guard<std::mutex> lk(logMutex_);
-        actionLog_.push_back("[" + TimeNow() + "] Started listening for reply");
+    // Auto-switch to User mode to listen for reply
+    if (state_.listenMode == ListenMode::AI && state_.commChatRegion.width > 0) {
+        SetListenMode(ListenMode::User, UserModeTrigger::Idle);
+        logger_.Info("Action", "Auto-switched to User mode for reply");
     }
 }
 
@@ -634,12 +728,19 @@ void App::CommThread() {
             std::string text = ReadChatAtPosition(state_.commClickPoint.x, state_.commClickPoint.y);
             if (!text.empty() && text != lastReadText) {
                 lastReadText = text;
-                {
-                    std::lock_guard<std::mutex> lk(logMutex_);
-                    commLog_.push_back("[" + TimeNow() + "] " + text);
-                    actionLog_.push_back("[" + TimeNow() + "] Comm: copied text, stopping listen");
-                }
+                logger_.Info("Comm", text);
+                logger_.Info("Action", "Comm: received command, executing...");
                 ExecuteCommands(text);
+                // In Manual User mode, keep listening for more commands
+                // In Idle-triggered mode, OnCommandsExecuted will have switched back to AI
+                if (state_.listenMode == ListenMode::User &&
+                    state_.userModeTrigger == UserModeTrigger::Manual) {
+                    logger_.Info("Comm", "Manual User mode — continuing to listen");
+                    // Clear lastFrame to avoid re-triggering on the same message
+                    lastFrame = cv::Mat();
+                    continue;  // stay in the while loop
+                }
+                // Otherwise, stop listening
                 commStop_ = true;
                 state_.commRunning = false;
                 return;
@@ -781,10 +882,7 @@ static BYTE NameToVK(const std::string& name) {
 }
 
 void App::ExecuteCommand(const Command& cmd) {
-    {
-        std::lock_guard<std::mutex> lk(logMutex_);
-        actionLog_.push_back("[" + TimeNow() + "] Exec: " + cmd.action + ":" + cmd.params);
-    }
+    logger_.Info("Action", "Exec: " + cmd.action + ":" + cmd.params);
 
     if (cmd.action == "click") {
         int x = 0, y = 0;
@@ -875,12 +973,20 @@ void App::ExecuteCommand(const Command& cmd) {
         }
     } else if (cmd.action == "stop") {
         StopMonitor();
+    } else if (cmd.action == "mode") {
+        if (cmd.params == "ai") {
+            SetListenMode(ListenMode::AI, UserModeTrigger::Manual);
+        } else if (cmd.params == "user") {
+            SetListenMode(ListenMode::User, UserModeTrigger::Manual);
+        }
     }
 }
 
 void App::ExecuteCommands(const std::string& text) {
     auto cmds = ParseCommands(text);
+    bool hasModeCmd = false;
     for (auto& cmd : cmds) {
+        if (cmd.action == "mode") hasModeCmd = true;
         ExecuteCommand(cmd);
         Sleep(1000);
     }
@@ -890,9 +996,12 @@ void App::ExecuteCommands(const std::string& text) {
         cv::Mat result = CaptureScreen(state_.monitorRegion);
         if (!result.empty()) {
             SendImageToComm(result);
-            std::lock_guard<std::mutex> lk(logMutex_);
-            actionLog_.push_back("[" + TimeNow() + "] Sent post-execution screenshot");
+            logger_.Info("Action", "Sent post-execution screenshot");
         }
+    }
+    // ListenMode: decide whether to auto-return to AI after command execution
+    if (!cmds.empty()) {
+        OnCommandsExecuted(hasModeCmd);
     }
 }
 
@@ -1006,19 +1115,13 @@ void App::ExecuteStrategyAction(const StrategyAction& step) {
 }
 
 void App::ExecuteStrategy(const Strategy& s) {
-    {
-        std::lock_guard<std::mutex> lk(logMutex_);
-        actionLog_.push_back("[" + TimeNow() + "] Strategy: " + s.name + " (" +
-            std::to_string(s.actions.size()) + " steps)");
-    }
+    logger_.Info("Action", "Strategy: " + s.name + " (" +
+        std::to_string(s.actions.size()) + " steps)");
     for (auto& step : s.actions) {
         ExecuteStrategyAction(step);
         if (step.delayMs > 0) Sleep(step.delayMs);
     }
-    {
-        std::lock_guard<std::mutex> lk(logMutex_);
-        actionLog_.push_back("[" + TimeNow() + "] Strategy: " + s.name + " done");
-    }
+    logger_.Info("Action", "Strategy: " + s.name + " done");
 }
 
 void App::CheckAndExecuteStrategies(int elapsedSec) {
@@ -1060,8 +1163,7 @@ void App::LoadYesDetectFromFile() {
     if (!yd.templateImage.empty()) {
         yesTemplate_ = cv::imread(yd.templateImage, cv::IMREAD_COLOR);
         if (!yesTemplate_.empty()) {
-            std::lock_guard<std::mutex> lk(logMutex_);
-            actionLog_.push_back("[" + TimeNow() + "] Yes template loaded: " +
+            logger_.Info("Action", "Yes template loaded: " +
                 yd.templateImage + " (" + std::to_string(yesTemplate_.cols) + "x" +
                 std::to_string(yesTemplate_.rows) + ")");
         }
@@ -1124,11 +1226,8 @@ bool App::ClickYesIfFound() {
     int screenX = state_.monitorRegion.x + pt.x;
     int screenY = state_.monitorRegion.y + pt.y;
 
-    {
-        std::lock_guard<std::mutex> lk(logMutex_);
-        actionLog_.push_back("[" + TimeNow() + "] Auto-click Yes at (" +
-            std::to_string(pt.x) + "," + std::to_string(pt.y) + ")");
-    }
+    logger_.Info("Action", "Auto-click Yes at (" +
+        std::to_string(pt.x) + "," + std::to_string(pt.y) + ")");
 
     SetCursorPos(screenX, screenY);
     Sleep(50);
